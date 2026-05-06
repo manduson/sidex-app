@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
-const ADMIN_PIN = '4829'; // 관리자 '만두'의 비밀 PIN 번호 (원하는 번호로 변경 가능)
-
 const Login = () => {
   const [nickname, setNickname] = useState('');
   const [pin, setPin] = useState('');
@@ -38,17 +36,27 @@ const Login = () => {
           setLoading(false);
           return;
         }
-        if (pin !== ADMIN_PIN) {
+
+        // Supabase sidex_map 테이블의 id: 2에서 동적 PIN 번호를 로드 (없을 경우 초기값 '0000')
+        const { data: pinData, error: pinError } = await supabase
+          .from('sidex_map')
+          .select('image_url')
+          .eq('id', 2)
+          .maybeSingle();
+
+        if (pinError) throw pinError;
+
+        const currentPin = pinData?.image_url || '0000';
+
+        if (pin !== currentPin) {
           alert('올바르지 않은 관리자 PIN 번호입니다.');
           setLoading(false);
           return;
         }
       } else {
         // 2. 일반 사용자인 경우 중복 체크
-        // 이미 저장된 로컬스토리지 이름과 같으면 프리패스
         const stored = localStorage.getItem('sidex_nickname');
         if (stored !== trimmedNickname) {
-          // sidex_items 테이블에서 중복 확인
           const { data: itemMatch, error: itemErr } = await supabase
             .from('sidex_items')
             .select('recommender_name')
@@ -57,7 +65,6 @@ const Login = () => {
 
           if (itemErr) throw itemErr;
 
-          // sidex_comments 테이블에서 중복 확인
           const { data: commentMatch, error: commentErr } = await supabase
             .from('sidex_comments')
             .select('commenter_name')
@@ -76,10 +83,10 @@ const Login = () => {
 
       // 3. 로컬 스토리지에 닉네임 저장 및 이동
       localStorage.setItem('sidex_nickname', trimmedNickname);
-      navigate('/'); // 메인 피드 화면으로 이동
+      navigate('/');
     } catch (error) {
       console.error('Error during nickname validation:', error);
-      alert('닉네임 검증 중 오류가 발생했습니다.');
+      alert('로그인 검증 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
@@ -114,7 +121,7 @@ const Login = () => {
             <input 
               type="password" 
               className="text-input" 
-              placeholder="PIN 번호 4자리를 입력하세요" 
+              placeholder="초기 PIN 번호 0000" 
               value={pin}
               onChange={(e) => setPin(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleStart()}

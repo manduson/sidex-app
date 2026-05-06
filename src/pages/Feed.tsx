@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, MapPin, MessageSquare, Send, Image, ChevronDown, ChevronUp, Upload, MoreVertical, Edit2, Trash2, X } from 'lucide-react';
+import { PlusCircle, MapPin, MessageSquare, Image, ChevronDown, ChevronUp, Upload, MoreVertical, Edit2, Trash2, X, Heart } from 'lucide-react';
 
 interface SidexComment {
   id: number;
@@ -18,6 +18,8 @@ interface SidexItem {
   location?: string;
   created_at: string;
   sidex_comments?: SidexComment[];
+  likesCount?: number;
+  isLikedByMe?: boolean;
 }
 
 const Feed = () => {
@@ -31,6 +33,7 @@ const Feed = () => {
   const [isFullscreenMapOpen, setIsFullscreenMapOpen] = useState(false);
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [editingItem, setEditingItem] = useState<SidexItem | null>(null);
+  const [activeCommentItemId, setActiveCommentItemId] = useState<number | null>(null);
   const mapInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
@@ -74,12 +77,22 @@ const Feed = () => {
 
       if (error) throw error;
       
-      const formattedData = (data || []).map((item: any) => ({
-        ...item,
-        sidex_comments: (item.sidex_comments || []).sort(
-          (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        )
-      }));
+      const currentNickname = nickname || localStorage.getItem('sidex_nickname') || '';
+
+      const formattedData = (data || []).map((item: any) => {
+        const rawComments = item.sidex_comments || [];
+        const likes = rawComments.filter((c: any) => c.content === '__LIKE__');
+        const actualComments = rawComments.filter((c: any) => c.content !== '__LIKE__');
+
+        return {
+          ...item,
+          likesCount: likes.length,
+          isLikedByMe: likes.some((c: any) => c.commenter_name === currentNickname),
+          sidex_comments: actualComments.sort(
+            (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          )
+        };
+      });
 
       setItems(formattedData);
     } catch (error) {
@@ -96,23 +109,31 @@ const Feed = () => {
       const { error: commentError } = await supabase
         .from('sidex_comments')
         .delete()
-        .eq('item_id', id);
+        .eq('item_id', id)
+        .select();
 
       if (commentError) throw commentError;
 
       // 2. 추천템 삭제
-      const { error } = await supabase
+      const { data: itemData, error } = await supabase
         .from('sidex_items')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .select();
 
       if (error) throw error;
 
+      // 만약 RLS(Row Level Security) 정책에 의해 삭제가 차단된 경우, error는 없으나 삭제된 데이터(itemData)가 비어있음
+      if (!itemData || itemData.length === 0) {
+        alert('⚠️ 삭제 실패!\n\n이유: Supabase DB의 보안(RLS) 정책에 의해 삭제 권한이 차단되어 있습니다.\n\n해결방법:\nSupabase 대시보드 -> Database -> Policies에서 sidex_items 및 sidex_comments 테이블의 DELETE 권한을 "Enable" 또는 "true"로 설정해주셔야 합니다.');
+        return;
+      }
+
       setItems(prev => prev.filter(item => item.id !== id));
       alert('삭제되었습니다.');
-    } catch (error) {
-      console.error('Error deleting item:', error);
-      alert('삭제에 실패했습니다. (댓글이나 게시글에 대한 삭제 권한이 없거나 데이터베이스 에러가 발생했습니다)');
+    } catch (err: any) {
+      console.error('Error deleting item:', err);
+      alert('삭제 실패 원인: ' + (err?.message || JSON.stringify(err) || '알 수 없는 에러'));
     }
   };
 
@@ -128,6 +149,71 @@ const Feed = () => {
       if (data) setMapUrl(data.image_url);
     } catch (error) {
       console.error('Error fetching map:', error);
+    }
+  };
+
+  const handleChangePin = async () => {
+    const newPin = window.prompt('새로운 관리자 PIN 번호 4자리를 입력해주세요:');
+    if (newPin === null) return;
+    if (newPin.trim().length !== 4 || isNaN(Number(newPin))) {
+      alert('PIN 번호는 반드시 숫자 4자리여야 합니다!');
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('sidex_map')
+        .upsert({ id: 2, image_url: newPin.trim() });
+
+      if (error) throw error;
+      alert('관리자 PIN 번호가 성공적으로 변경되었습니다! 🎉');
+    } catch (err) {
+      console.error('Error changing PIN:', err);
+      alert('PIN 번호 변경에 실패했습니다.');
+    }
+  };
+
+  const handleLogout = () => {
+    if (window.confirm('로그아웃 하시겠습니까?')) {
+      localStorage.removeItem('sidex_nickname');
+      navigate('/login');
+    }
+  };
+
+  const handleToggleLike = async (itemId: number, isLikedByMe: boolean) => {
+    try {
+      const currentNickname = nickname || localStorage.getItem('sidex_nickname') || '';
+      if (!currentNickname) return;
+
+      if (isLikedByMe) {
+        // 이미 추천한 경우: __LIKE__ 댓글 삭제
+        const { error } = await supabase
+          .from('sidex_comments')
+          .delete()
+          .eq('item_id', itemId)
+          .eq('commenter_name', currentNickname)
+          .eq('content', '__LIKE__');
+
+        if (error) throw error;
+      } else {
+        // 추천하지 않은 경우: __LIKE__ 댓글 추가
+        const { error } = await supabase
+          .from('sidex_comments')
+          .insert([
+            {
+              item_id: itemId,
+              commenter_name: currentNickname,
+              content: '__LIKE__'
+            }
+          ]);
+
+        if (error) throw error;
+      }
+      
+      // 즉시 화면 데이터 동기화
+      fetchItems();
+    } catch (error) {
+      console.error('Error toggling like:', error);
     }
   };
 
@@ -211,35 +297,7 @@ const Feed = () => {
     }
   };
 
-  const handleAddComment = async (itemId: number) => {
-    const commentContent = commentInputs[itemId]?.trim();
-    if (!commentContent) return;
 
-    setSubmittingComment(prev => ({ ...prev, [itemId]: true }));
-
-    try {
-      const { error } = await supabase
-        .from('sidex_comments')
-        .insert([
-          {
-            item_id: itemId,
-            commenter_name: nickname,
-            content: commentContent
-          }
-        ]);
-
-      if (error) throw error;
-
-      // 입력창 비우기
-      setCommentInputs(prev => ({ ...prev, [itemId]: '' }));
-      fetchItems(); // 댓글 목록 갱신
-    } catch (error) {
-      console.error('Error adding comment:', error);
-      alert('댓글 등록에 실패했습니다.');
-    } finally {
-      setSubmittingComment(prev => ({ ...prev, [itemId]: false }));
-    }
-  };
 
   if (loading) {
     return (
@@ -253,7 +311,47 @@ const Feed = () => {
     <div style={{ paddingBottom: '80px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>원장님들의 추천템 모아보기</h2>
-        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>👤 {nickname}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>👤 {nickname}</span>
+          {nickname === '만두' && (
+            <button 
+              onClick={handleChangePin}
+              style={{
+                background: '#F1F5F9',
+                border: 'none',
+                padding: '4px 8px',
+                borderRadius: '6px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                color: 'var(--primary)',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onMouseOver={(e) => e.currentTarget.style.background = '#E2E8F0'}
+              onMouseOut={(e) => e.currentTarget.style.background = '#F1F5F9'}
+            >
+              PIN 변경
+            </button>
+          )}
+          <button 
+            onClick={handleLogout}
+            style={{
+              background: '#FFF1F2',
+              border: 'none',
+              padding: '4px 8px',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              fontWeight: 600,
+              color: '#F43F5E',
+              cursor: 'pointer',
+              transition: 'all 0.2s'
+            }}
+            onMouseOver={(e) => e.currentTarget.style.background = '#FFE4E6'}
+            onMouseOut={(e) => e.currentTarget.style.background = '#FFF1F2'}
+          >
+            로그아웃
+          </button>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
@@ -372,6 +470,38 @@ const Feed = () => {
             <div key={item.id} className="feed-card" style={{ background: 'white', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
               <img src={item.image_url} alt={item.item_name} style={{ width: '100%', height: '250px', objectFit: 'cover' }} />
               
+              {/* 인스타그램 감성 하트 & 좋아요 액션 바 */}
+              <div style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '12px', 
+                padding: '12px 16px 0px 16px',
+                borderTop: '1px solid #FAFAFA'
+              }}>
+                <button 
+                  onClick={() => handleToggleLike(item.id, !!item.isLikedByMe)}
+                  style={{ 
+                    background: 'none', 
+                    border: 'none', 
+                    padding: 0, 
+                    cursor: 'pointer', 
+                    color: item.isLikedByMe ? '#FF2F40' : '#262626',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    transition: 'transform 0.1s ease',
+                    outline: 'none'
+                  }}
+                  onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.85)'}
+                  onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                  <Heart size={24} fill={item.isLikedByMe ? '#FF2F40' : 'none'} style={{ transition: 'all 0.2s' }} />
+                </button>
+                <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#262626' }}>
+                  좋아요 {item.likesCount || 0}개
+                </span>
+              </div>
+
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                   <h3 style={{ fontSize: '1.15rem', fontWeight: 600, margin: 0 }}>{item.item_name}</h3>
@@ -431,56 +561,43 @@ const Feed = () => {
                 </div>
               </div>
 
-              {/* 댓글 리스트 영역 */}
-              <div style={{ background: '#FAFAFA', padding: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '12px' }}>
-                  <MessageSquare size={16} />
-                  <span>댓글 {item.sidex_comments?.length || 0}개</span>
-                </div>
-
-                {item.sidex_comments && item.sidex_comments.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px', maxHeight: '200px', overflowY: 'auto' }}>
-                    {item.sidex_comments.map(comment => (
-                      <div key={comment.id} style={{ fontSize: '0.9rem', lineHeight: '1.4' }}>
-                        <strong style={{ marginRight: '8px', color: 'var(--text-main)' }}>{comment.commenter_name}</strong>
-                        <span style={{ color: '#334155' }}>{comment.content}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* 댓글 작성창 */}
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input 
-                    type="text"
-                    className="text-input"
-                    style={{ padding: '10px 14px', borderRadius: '20px', fontSize: '0.85rem', flex: 1, height: '40px' }}
-                    placeholder="의견을 남겨주세요..."
-                    value={commentInputs[item.id] || ''}
-                    onChange={(e) => setCommentInputs(prev => ({ ...prev, [item.id]: e.target.value }))}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddComment(item.id)}
-                  />
+              {/* 인스타그램 스타일 간소화 댓글 트리거 */}
+              <div style={{ padding: '12px 16px', background: 'white' }}>
+                {item.sidex_comments && item.sidex_comments.length > 0 ? (
                   <button 
-                    onClick={() => handleAddComment(item.id)}
-                    disabled={submittingComment[item.id]}
+                    onClick={() => setActiveCommentItemId(item.id)}
                     style={{
-                      background: 'var(--primary)',
-                      color: 'white',
+                      background: 'none',
                       border: 'none',
-                      borderRadius: '50%',
-                      width: '40px',
-                      height: '40px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
+                      padding: 0,
+                      color: 'var(--text-muted)',
+                      fontSize: '0.85rem',
+                      fontWeight: 500,
                       cursor: 'pointer',
-                      opacity: commentInputs[item.id]?.trim() ? 1 : 0.5,
-                      transition: 'all 0.2s'
+                      textAlign: 'left',
+                      outline: 'none'
                     }}
                   >
-                    <Send size={16} />
+                    댓글 {item.sidex_comments.length}개 모두 보기...
                   </button>
-                </div>
+                ) : (
+                  <button 
+                    onClick={() => setActiveCommentItemId(item.id)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'var(--text-muted)',
+                      fontSize: '0.85rem',
+                      fontWeight: 500,
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      outline: 'none'
+                    }}
+                  >
+                    첫 번째로 의견을 남겨주세요... 💬
+                  </button>
+                )}
               </div>
 
             </div>
@@ -545,7 +662,229 @@ const Feed = () => {
           }}
         />
       )}
+
+      {/* 인스타그램형 댓글 바텀 시트 */}
+      {activeCommentItemId !== null && (
+        <CommentsBottomSheetModal 
+          itemId={activeCommentItemId} 
+          onClose={() => setActiveCommentItemId(null)} 
+          items={items}
+          nickname={nickname}
+          commentInputs={commentInputs}
+          setCommentInputs={setCommentInputs}
+          submittingComment={submittingComment}
+          setSubmittingComment={setSubmittingComment}
+          fetchItems={fetchItems}
+        />
+      )}
     </div>
+  );
+};
+
+// 1_2. 인스타그램 감성 하프 바텀 시트 댓글 모달 컴포넌트
+interface CommentsBottomSheetProps {
+  itemId: number;
+  onClose: () => void;
+  items: SidexItem[];
+  nickname: string;
+  commentInputs: { [key: number]: string };
+  setCommentInputs: React.Dispatch<React.SetStateAction<{ [key: number]: string }>>;
+  submittingComment: { [key: number]: boolean };
+  setSubmittingComment: React.Dispatch<React.SetStateAction<{ [key: number]: boolean }>>;
+  fetchItems: () => Promise<void>;
+}
+
+const CommentsBottomSheetModal: React.FC<CommentsBottomSheetProps> = ({
+  itemId,
+  onClose,
+  items,
+  nickname,
+  commentInputs,
+  setCommentInputs,
+  submittingComment,
+  setSubmittingComment,
+  fetchItems
+}) => {
+  const item = items.find(i => i.id === itemId);
+  if (!item) return null;
+
+  const handleAddComment = async () => {
+    const commentContent = commentInputs[itemId]?.trim();
+    if (!commentContent) return;
+
+    setSubmittingComment(prev => ({ ...prev, [itemId]: true }));
+
+    try {
+      const { error } = await supabase
+        .from('sidex_comments')
+        .insert([
+          {
+            item_id: itemId,
+            commenter_name: nickname,
+            content: commentContent
+          }
+        ]);
+
+      if (error) throw error;
+
+      // 입력창 비우기
+      setCommentInputs(prev => ({ ...prev, [itemId]: '' }));
+      await fetchItems(); // 댓글 목록 갱신
+    } catch (error) {
+      console.error('Error adding comment:', error);
+      alert('댓글 등록에 실패했습니다.');
+    } finally {
+      setSubmittingComment(prev => ({ ...prev, [itemId]: false }));
+    }
+  };
+
+  return (
+    <>
+      {/* 백드롭 어두운 배경 */}
+      <div 
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0, 0, 0, 0.4)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 1000,
+          animation: 'fadeIn 0.2s ease-out'
+        }}
+      />
+      
+      {/* 인스타그램형 바텀 시트 */}
+      <div 
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '100%',
+          maxWidth: '500px', // 앱 전체 폭 기준
+          height: '75vh',
+          background: 'white',
+          borderRadius: '24px 24px 0 0',
+          boxShadow: '0 -8px 32px rgba(0, 0, 0, 0.15)',
+          zIndex: 1001,
+          display: 'flex',
+          flexDirection: 'column',
+          animation: 'slideUp 0.3s cubic-bezier(0.1, 0.76, 0.55, 0.94)',
+          overflow: 'hidden'
+        }}
+      >
+        {/* 인스타용 상단 손잡이 핸들 */}
+        <div style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '10px 0 4px 0' }}>
+          <div style={{ width: '40px', height: '4px', background: '#E2E8F0', borderRadius: '2px' }} />
+        </div>
+
+        {/* 바텀 시트 헤더 */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '12px 20px',
+          borderBottom: '1px solid #F1F5F9'
+        }}>
+          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, textAlign: 'center', flex: 1, marginLeft: '24px' }}>댓글</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', padding: '4px', cursor: 'pointer' }}>
+            <X size={20} color="#64748B" />
+          </button>
+        </div>
+
+        {/* 댓글 스크롤 영역 */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {item.sidex_comments && item.sidex_comments.length > 0 ? (
+            item.sidex_comments.map(comment => (
+              <div key={comment.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                {/* 닉네임 아바타 원형 */}
+                <div style={{
+                  width: '32px', height: '32px', borderRadius: '50%', background: comment.commenter_name === '만두' ? 'var(--primary)' : '#E2E8F0',
+                  display: 'flex', alignItems: 'center', color: comment.commenter_name === '만두' ? 'white' : '#475569',
+                  fontSize: '0.75rem', fontWeight: 700, flexShrink: 0, justifyContent: 'center'
+                }}>
+                  {comment.commenter_name.slice(0, 2)}
+                </div>
+                {/* 댓글 본문 */}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'baseline', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#1E293B' }}>{comment.commenter_name}</span>
+                    <span style={{ fontSize: '0.7rem', color: '#94A3B8' }}>
+                      {new Date(comment.created_at).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '0.88rem', color: '#334155', margin: 0, lineHeight: '1.4', wordBreak: 'break-all' }}>{comment.content}</p>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: '8px' }}>
+              <MessageSquare size={36} color="#CBD5E1" />
+              <span style={{ fontSize: '0.9rem' }}>아직 댓글이 없습니다. 첫 마디를 나누어 보세요!</span>
+            </div>
+          )}
+        </div>
+
+        {/* 댓글 입력 고정 하단바 */}
+        <div style={{
+          padding: '16px 20px',
+          borderTop: '1px solid #F1F5F9',
+          background: 'white',
+          display: 'flex',
+          gap: '10px',
+          alignItems: 'center'
+        }}>
+          <input 
+            type="text"
+            className="text-input"
+            style={{ 
+              padding: '12px 16px', 
+              borderRadius: '24px', 
+              fontSize: '0.9rem', 
+              flex: 1, 
+              height: '44px',
+              border: '1px solid #E2E8F0',
+              background: '#F8FAFC'
+            }}
+            placeholder="댓글 추가..."
+            value={commentInputs[itemId] || ''}
+            onChange={(e) => setCommentInputs(prev => ({ ...prev, [itemId]: e.target.value }))}
+            onKeyDown={(e) => e.key === 'Enter' && handleAddComment()}
+          />
+          <button 
+            onClick={handleAddComment}
+            disabled={submittingComment[itemId] || !commentInputs[itemId]?.trim()}
+            style={{
+              background: commentInputs[itemId]?.trim() ? 'var(--primary)' : 'none',
+              color: commentInputs[itemId]?.trim() ? 'white' : '#94A3B8',
+              border: 'none',
+              borderRadius: commentInputs[itemId]?.trim() ? '24px' : 'none',
+              padding: commentInputs[itemId]?.trim() ? '10px 16px' : '0',
+              fontSize: '0.9rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              height: '44px',
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            게시
+          </button>
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from { transform: translate(-50%, 100%); }
+          to { transform: translate(-50%, 0); }
+        }
+      `}</style>
+    </>
   );
 };
 

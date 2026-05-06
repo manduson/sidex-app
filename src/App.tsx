@@ -10,7 +10,25 @@ function App() {
     <BrowserRouter>
       <div className="app-container">
         <div className="header">
-          <h1>✨ 원장님 추천템 모음집</h1>
+          <h1 style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            ✨ 원장님 추천템 모음집 
+            <span style={{ 
+              fontSize: '0.85rem', 
+              fontWeight: 600, 
+              color: '#64748B', 
+              WebkitTextFillColor: 'initial',
+              background: '#F1F5F9', 
+              padding: '2px 8px', 
+              borderRadius: '12px',
+              border: '1px solid var(--border)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '2px',
+              marginLeft: '4px'
+            }}>
+              🥟만두
+            </span>
+          </h1>
         </div>
         <div className="content">
           {!isConfigured ? (
