@@ -37,6 +37,28 @@ const Feed = () => {
   const mapInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
+  const [selectedUserFilter, setSelectedUserFilter] = useState<string | null>(null);
+
+  const getActiveUsers = () => {
+    const usersSet = new Set<string>();
+    
+    // 현재 로그인한 사용자 추가
+    if (nickname) usersSet.add(nickname);
+    
+    // 관리자 항상 포함되게 보정
+    usersSet.add('만두');
+
+    items.forEach(item => {
+      if (item.recommender_name) usersSet.add(item.recommender_name);
+      if (item.sidex_comments) {
+        item.sidex_comments.forEach((c: any) => {
+          if (c.commenter_name) usersSet.add(c.commenter_name);
+        });
+      }
+    });
+
+    return Array.from(usersSet);
+  };
 
   useEffect(() => {
     const savedNickname = localStorage.getItem('sidex_nickname');
@@ -219,20 +241,67 @@ const Feed = () => {
 
 
 
+  const compressImage = (file: File, maxWidth = 1600, quality = 0.85): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      const objectUrl = URL.createObjectURL(file);
+      
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl); // 메모리 누수 방지
+        
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (blob) {
+              resolve(blob);
+            } else {
+              reject(new Error('Canvas to Blob failed'));
+            }
+          },
+          'image/jpeg',
+          quality
+        );
+      };
+      
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error('선택한 파일이 올바른 이미지가 아닙니다.'));
+      };
+      
+      img.src = objectUrl;
+    });
+  };
+
   const handleMapUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || !e.target.files[0]) return;
     const file = e.target.files[0];
     setUploadingMap(true);
 
     try {
-      // 지도는 정밀한 글씨(부스 번호 등)가 많으므로, 화질 저하 및 브라우저 압축 에러 방지를 위해 원본 그대로 업로드합니다.
-      const fileExt = file.name.split('.').pop() || 'jpg';
-      const fileName = `map-${Date.now()}.${fileExt}`;
+      // 대용량 지도로 인한 Supabase 용량 제한(ERR_CONNECTION_CLOSED)을 방지하기 위해 URL.createObjectURL 기반의 안전한 압축 적용
+      const compressedBlob = await compressImage(file, 2000, 0.85); // 지도는 가독성을 위해 가로 최대 2000px 유지
+      const compressedFile = new File([compressedBlob], `map-${Date.now()}.jpg`, { type: 'image/jpeg' });
+
+      const fileName = `map-${Date.now()}.jpg`;
       const filePath = `public/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('sidex_images')
-        .upload(filePath, file);
+        .upload(filePath, compressedFile);
 
       if (uploadError) throw uploadError;
 
@@ -248,9 +317,9 @@ const Feed = () => {
 
       setMapUrl(publicUrl);
       alert('지도가 성공적으로 업데이트되었습니다! 🗺️');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error uploading map:', error);
-      alert('지도 업로드에 실패했습니다.');
+      alert(`지도 업로드에 실패했습니다.\n사유: ${error.message || '네트워크 오류 또는 파일이 너무 큽니다.'}`);
     } finally {
       setUploadingMap(false);
     }
@@ -419,13 +488,199 @@ const Feed = () => {
         </div>
       )}
 
+      {/* 인스타그램 스토리 활동 원장님들 일람 */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '14px',
+        overflowX: 'auto',
+        padding: '8px 4px 16px 4px',
+        marginBottom: '16px',
+        borderBottom: '1px solid #F1F5F9',
+        scrollbarWidth: 'none',
+        msOverflowStyle: 'none',
+        WebkitOverflowScrolling: 'touch'
+      }}>
+        {/* 전체보기 스토리 단추 */}
+        <div 
+          onClick={() => setSelectedUserFilter(null)}
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '6px',
+            cursor: 'pointer',
+            flexShrink: 0,
+            transition: 'transform 0.15s ease'
+          }}
+          onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.92)'}
+          onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+        >
+          <div style={{
+            width: '60px',
+            height: '60px',
+            borderRadius: '50%',
+            background: selectedUserFilter === null 
+              ? 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)' 
+              : '#E2E8F0',
+            padding: '2px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 10px rgba(0,0,0,0.06)'
+          }}>
+            <div style={{
+              width: '100%',
+              height: '100%',
+              borderRadius: '50%',
+              background: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+              color: selectedUserFilter === null ? 'var(--primary)' : '#64748B',
+              border: '2px solid white'
+            }}>
+              전체
+            </div>
+          </div>
+          <span style={{ 
+            fontSize: '0.75rem', 
+            fontWeight: selectedUserFilter === null ? 700 : 500,
+            color: selectedUserFilter === null ? 'var(--text-main)' : 'var(--text-muted)'
+          }}>
+            전체글
+          </span>
+        </div>
+
+        {/* 개별 원장님 스토리 단추들 */}
+        {getActiveUsers().map((user) => {
+          const isSelected = selectedUserFilter === user;
+          const isMe = user === nickname;
+          
+          const colors = [
+            { bg: '#EEF2FF', text: '#4F46E5' },
+            { bg: '#FDF2F8', text: '#DB2777' },
+            { bg: '#ECFDF5', text: '#059669' },
+            { bg: '#FFF7ED', text: '#EA580C' },
+            { bg: '#FAF5FF', text: '#9333EA' }
+          ];
+          const colorIndex = (user.charCodeAt(0) + (user.charCodeAt(1) || 0)) % colors.length;
+          const colorPair = colors[colorIndex];
+
+          return (
+            <div 
+              key={user}
+              onClick={() => setSelectedUserFilter(isSelected ? null : user)}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: 'pointer',
+                flexShrink: 0,
+                position: 'relative',
+                transition: 'transform 0.15s ease'
+              }}
+              onMouseDown={(e) => e.currentTarget.style.transform = 'scale(0.92)'}
+              onMouseUp={(e) => e.currentTarget.style.transform = 'scale(1)'}
+            >
+              <div style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: '50%',
+                background: isSelected 
+                  ? 'linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%)' 
+                  : (isMe ? 'linear-gradient(135deg, #818CF8, #C084FC)' : '#E2E8F0'),
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 4px 10px rgba(0,0,0,0.06)'
+              }}>
+                <div style={{
+                  width: '100%',
+                  height: '100%',
+                  borderRadius: '50%',
+                  background: colorPair.bg,
+                  color: colorPair.text,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                  border: '2px solid white'
+                }}>
+                  {user.substring(0, 2)}
+                </div>
+              </div>
+              
+              {/* 활동 중 뱃지 표시 */}
+              <div style={{
+                position: 'absolute',
+                bottom: '22px',
+                right: '2px',
+                width: '12px',
+                height: '12px',
+                borderRadius: '50%',
+                background: '#10B981',
+                border: '2px solid white',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.15)'
+              }} />
+
+              <span style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: isSelected ? 700 : 500,
+                color: isSelected ? 'var(--text-main)' : 'var(--text-muted)'
+              }}>
+                {user === nickname ? '나' : (user.length > 4 ? `${user.substring(0, 3)}..` : user)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {selectedUserFilter && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '10px 14px',
+          background: '#EEF2FF',
+          borderRadius: '10px',
+          border: '1px solid #C7D2FE',
+          marginBottom: '16px',
+          fontSize: '0.85rem'
+        }}>
+          <span style={{ color: 'var(--primary)', fontWeight: 600 }}>
+            🔍 {selectedUserFilter} 원장님의 추천템만 모아보고 있습니다
+          </span>
+          <button 
+            onClick={() => setSelectedUserFilter(null)}
+            style={{
+              background: 'white',
+              border: '1px solid #C7D2FE',
+              borderRadius: '6px',
+              padding: '4px 10px',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: 'var(--primary)',
+              cursor: 'pointer'
+            }}
+          >
+            전체 보기
+          </button>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748B', background: '#F8FAFC', borderRadius: '16px', border: '1px dashed #E2E8F0' }}>
           아직 추천된 물품이 없습니다.<br/>첫 번째로 추천해 보세요!
         </div>
       ) : (
         <div className="feed-grid" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-          {items.map(item => (
+          {(selectedUserFilter ? items.filter(item => item.recommender_name === selectedUserFilter) : items).map(item => (
             <div key={item.id} className="feed-card" style={{ background: 'white', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
               <img src={item.image_url} alt={item.item_name} style={{ width: '100%', height: '250px', objectFit: 'cover' }} />
               
