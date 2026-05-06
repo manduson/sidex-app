@@ -241,49 +241,43 @@ const Feed = () => {
 
 
 
-  const compressImage = (file: File, maxWidth = 1600, quality = 0.85): Promise<Blob> => {
-    return new Promise((resolve, reject) => {
-      const img = new window.Image();
-      const objectUrl = URL.createObjectURL(file);
-      
-      img.onload = () => {
-        URL.revokeObjectURL(objectUrl); // 메모리 누수 방지
-        
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
+  const compressImage = async (file: File, maxWidth = 2000, quality = 0.85): Promise<Blob> => {
+    try {
+      // createImageBitmap은 브라우저 백그라운드에서 하드웨어 가속으로 이미지를 초고속 디코딩합니다.
+      // 기존 Image 객체나 FileReader 대비 메모리 누수와 브라우저 락업 현상을 완전히 예방합니다.
+      const imageBitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      let width = imageBitmap.width;
+      let height = imageBitmap.height;
 
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width);
-          width = maxWidth;
-        }
+      if (width > maxWidth) {
+        height = Math.round((height * maxWidth) / width);
+        width = maxWidth;
+      }
 
-        canvas.width = width;
-        canvas.height = height;
+      canvas.width = width;
+      canvas.height = height;
 
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(imageBitmap, 0, 0, width, height);
+      imageBitmap.close(); // 메모리 즉시 해제
 
+      return new Promise((resolve, reject) => {
         canvas.toBlob(
           (blob) => {
             if (blob) {
               resolve(blob);
             } else {
-              reject(new Error('Canvas to Blob failed'));
+              reject(new Error('Canvas 변환에 실패했습니다.'));
             }
           },
           'image/jpeg',
           quality
         );
-      };
-      
-      img.onerror = () => {
-        URL.revokeObjectURL(objectUrl);
-        reject(new Error('선택한 파일이 올바른 이미지가 아닙니다.'));
-      };
-      
-      img.src = objectUrl;
-    });
+      });
+    } catch (err) {
+      throw new Error('이미지를 읽을 수 없습니다. 인쇄용 CMYK 포맷이거나 파일이 손상되었는지 확인해 주세요.');
+    }
   };
 
   const handleMapUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
