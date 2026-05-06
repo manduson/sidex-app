@@ -292,16 +292,23 @@ const Feed = () => {
     setUploadingMap(true);
 
     try {
-      // 대용량 지도로 인한 Supabase 용량 제한(ERR_CONNECTION_CLOSED)을 방지하기 위해 URL.createObjectURL 기반의 안전한 압축 적용
-      const compressedBlob = await compressImage(file, 2000, 0.85); // 지도는 가독성을 위해 가로 최대 2000px 유지
-      const compressedFile = new File([compressedBlob], `map-${Date.now()}.jpg`, { type: 'image/jpeg' });
+      let fileToUpload: File | Blob = file;
+      let fileName = `map-${Date.now()}.${file.name.split('.').pop() || 'jpg'}`;
 
-      const fileName = `map-${Date.now()}.jpg`;
+      try {
+        // 대용량 지도로 인한 Supabase 용량 제한을 방지하기 위해 1차로 안전한 압축 시도
+        const compressedBlob = await compressImage(file, 2000, 0.85); // 지도는 가독성을 위해 가로 최대 2000px 유지
+        fileToUpload = new File([compressedBlob], `map-${Date.now()}.jpg`, { type: 'image/jpeg' });
+        fileName = `map-${Date.now()}.jpg`;
+      } catch (compressionError) {
+        console.warn('이미지 압축 중 실패 발생 (HEIC, PDF 또는 특수 포맷의 경우): 원본 파일로 즉시 대체 업로드합니다.', compressionError);
+      }
+
       const filePath = `public/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('sidex_images')
-        .upload(filePath, compressedFile);
+        .upload(filePath, fileToUpload);
 
       if (uploadError) throw uploadError;
 
