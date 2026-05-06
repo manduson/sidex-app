@@ -267,35 +267,39 @@ const Feed = () => {
           {showMap ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </button>
 
-        <button 
-          onClick={() => mapInputRef.current?.click()}
-          disabled={uploadingMap}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '6px',
-            padding: '10px 14px',
-            background: 'white',
-            border: '1px solid var(--border)',
-            borderRadius: '10px',
-            color: 'var(--text-main)',
-            fontWeight: 600,
-            fontSize: '0.9rem',
-            cursor: 'pointer',
-            transition: 'all 0.2s'
-          }}
-        >
-          {uploadingMap ? <div className="loader" style={{ width: '16px', height: '16px', borderColor: '#cbd5e1', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }}></div> : <Upload size={18} />}
-          <span>{uploadingMap ? '업로드 중...' : '지도 등록'}</span>
-        </button>
-        <input 
-          type="file" 
-          accept="image/*" 
-          ref={mapInputRef} 
-          onChange={handleMapUpload} 
-          style={{ display: 'none' }} 
-        />
+        {nickname === '만두' && (
+          <>
+            <button 
+              onClick={() => mapInputRef.current?.click()}
+              disabled={uploadingMap}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '6px',
+                padding: '10px 14px',
+                background: 'white',
+                border: '1px solid var(--border)',
+                borderRadius: '10px',
+                color: 'var(--text-main)',
+                fontWeight: 600,
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+            >
+              {uploadingMap ? <div className="loader" style={{ width: '16px', height: '16px', borderColor: '#cbd5e1', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }}></div> : <Upload size={18} />}
+              <span>{uploadingMap ? '업로드 중...' : '지도 등록'}</span>
+            </button>
+            <input 
+              type="file" 
+              accept="image/*" 
+              ref={mapInputRef} 
+              onChange={handleMapUpload} 
+              style={{ display: 'none' }} 
+            />
+          </>
+        )}
       </div>
 
       {/* 지도 아코디언 영역 */}
