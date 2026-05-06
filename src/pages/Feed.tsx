@@ -217,46 +217,7 @@ const Feed = () => {
     }
   };
 
-  const compressImage = (file: File, maxWidth = 1200, quality = 0.7): Promise<Blob> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new window.Image();
-        img.src = event.target?.result as string;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width;
-          let height = img.height;
 
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                resolve(blob);
-              } else {
-                reject(new Error('Canvas to Blob failed'));
-              }
-            },
-            'image/jpeg',
-            quality
-          );
-        };
-        img.onerror = (err) => reject(err);
-      };
-      reader.onerror = (err) => reject(err);
-    });
-  };
 
   const handleMapUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || !e.target.files[0]) return;
@@ -264,16 +225,14 @@ const Feed = () => {
     setUploadingMap(true);
 
     try {
-      // 지도는 크고 정밀해야 하므로 가로 최대 1600px, 화질 85%로 압축 적용
-      const compressedBlob = await compressImage(file, 1600, 0.85);
-      const compressedFile = new File([compressedBlob], `map-${Date.now()}.jpg`, { type: 'image/jpeg' });
-
-      const fileName = `map-${Date.now()}.jpg`;
+      // 지도는 정밀한 글씨(부스 번호 등)가 많으므로, 화질 저하 및 브라우저 압축 에러 방지를 위해 원본 그대로 업로드합니다.
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const fileName = `map-${Date.now()}.${fileExt}`;
       const filePath = `public/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from('sidex_images')
-        .upload(filePath, compressedFile);
+        .upload(filePath, file);
 
       if (uploadError) throw uploadError;
 
