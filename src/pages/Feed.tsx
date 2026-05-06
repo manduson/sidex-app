@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
-import { PlusCircle, MapPin, MessageSquare, Send, Image, ChevronDown, ChevronUp, Upload } from 'lucide-react';
+import { PlusCircle, MapPin, MessageSquare, Send, Image, ChevronDown, ChevronUp, Upload, MoreVertical, Edit2, Trash2, X } from 'lucide-react';
 
 interface SidexComment {
   id: number;
@@ -29,6 +29,8 @@ const Feed = () => {
   const [mapUrl, setMapUrl] = useState<string | null>(null);
   const [uploadingMap, setUploadingMap] = useState(false);
   const [isFullscreenMapOpen, setIsFullscreenMapOpen] = useState(false);
+  const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [editingItem, setEditingItem] = useState<SidexItem | null>(null);
   const mapInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
@@ -84,6 +86,19 @@ const Feed = () => {
       console.error('Error fetching items:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!window.confirm('정말 이 추천템을 삭제하시겠습니까?')) return;
+    try {
+      const { error } = await supabase.from('sidex_items').delete().eq('id', id);
+      if (error) throw error;
+      setItems(prev => prev.filter(item => item.id !== id));
+      alert('삭제되었습니다.');
+    } catch (error) {
+      console.error('Error deleting item:', error);
+      alert('삭제에 실패했습니다.');
     }
   };
 
@@ -342,6 +357,43 @@ const Feed = () => {
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                   <h3 style={{ fontSize: '1.15rem', fontWeight: 600, margin: 0 }}>{item.item_name}</h3>
+                  {(item.recommender_name === nickname || nickname === '만두') && (
+                    <div style={{ position: 'relative' }}>
+                      <button 
+                        onClick={() => setActiveMenu(activeMenu === item.id ? null : item.id)}
+                        style={{ background: 'none', border: 'none', padding: '4px', cursor: 'pointer', color: 'var(--text-muted)' }}
+                      >
+                        <MoreVertical size={20} />
+                      </button>
+                      
+                      {activeMenu === item.id && (
+                        <>
+                          <div 
+                            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9 }} 
+                            onClick={() => setActiveMenu(null)}
+                          />
+                          <div style={{ 
+                            position: 'absolute', right: 0, top: '30px', background: 'white', borderRadius: '8px', 
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)', border: '1px solid var(--border)', zIndex: 10,
+                            minWidth: '120px', overflow: 'hidden'
+                          }}>
+                            <button 
+                              onClick={() => { setActiveMenu(null); setEditingItem(item); }}
+                              style={{ width: '100%', padding: '12px 16px', background: 'none', border: 'none', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
+                            >
+                              <Edit2 size={16} /> 수정하기
+                            </button>
+                            <button 
+                              onClick={() => { setActiveMenu(null); handleDelete(item.id); }}
+                              style={{ width: '100%', padding: '12px 16px', background: 'none', border: 'none', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', cursor: 'pointer', color: '#EF4444' }}
+                            >
+                              <Trash2 size={16} /> 삭제하기
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {item.location && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.9rem', color: '#64748B', marginBottom: '12px' }}>
@@ -462,6 +514,18 @@ const Feed = () => {
       {/* 전체 화면 지도 모달 */}
       {isFullscreenMapOpen && mapUrl && (
         <FullscreenMapModal imageUrl={mapUrl} onClose={() => setIsFullscreenMapOpen(false)} />
+      )}
+
+      {/* 수정 모달 */}
+      {editingItem && (
+        <EditItemModal 
+          item={editingItem} 
+          onClose={() => setEditingItem(null)} 
+          onSuccess={() => {
+            setEditingItem(null);
+            fetchItems(); // 목록 갱신
+          }}
+        />
       )}
     </div>
   );
@@ -642,6 +706,145 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
         textShadow: '0 1px 4px rgba(0,0,0,0.8)'
       }}>
         두 손가락으로 늘려 확대하고, 밀어서 이동하세요.
+      </div>
+    </div>
+  );
+};
+
+// 수정 모달 서브 컴포넌트
+interface EditItemProps {
+  item: SidexItem;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+const EditItemModal: React.FC<EditItemProps> = ({ item, onClose, onSuccess }) => {
+  const [name, setName] = useState(item.item_name);
+  const [location, setLocation] = useState(item.location || '');
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string>(item.image_url);
+  const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      setPhoto(file);
+      setPhotoPreview(URL.createObjectURL(file));
+    }
+  };
+
+  const compressImage = (file: File, maxWidth = 1200, quality = 0.7): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new window.Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx?.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(
+            (blob) => {
+              if (blob) resolve(blob);
+              else reject(new Error('Canvas to Blob failed'));
+            },
+            'image/jpeg',
+            quality
+          );
+        };
+        img.onerror = (err) => reject(err);
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) return alert('물품명을 입력해주세요.');
+    setLoading(true);
+    try {
+      let imageUrl = item.image_url;
+
+      // 새 사진이 있다면 압축 후 업로드
+      if (photo) {
+        const compressedBlob = await compressImage(photo, 1200, 0.7);
+        const compressedFile = new File([compressedBlob], `item-${Date.now()}.jpg`, { type: 'image/jpeg' });
+        const filePath = `public/item-${Date.now()}.jpg`;
+
+        const { error: uploadError } = await supabase.storage.from('sidex_images').upload(filePath, compressedFile);
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage.from('sidex_images').getPublicUrl(filePath);
+        imageUrl = publicUrl;
+      }
+
+      const { error } = await supabase.from('sidex_items').update({
+        item_name: name.trim(),
+        location: location.trim() || null,
+        image_url: imageUrl
+      }).eq('id', item.id);
+
+      if (error) throw error;
+      alert('수정되었습니다! 🎉');
+      onSuccess();
+    } catch (error) {
+      console.error('Error updating:', error);
+      alert('수정에 실패했습니다.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
+      background: 'rgba(0,0,0,0.6)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+    }}>
+      <div style={{
+        background: 'white', borderRadius: '24px', width: '100%', maxWidth: '500px', maxHeight: '90vh', overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px',
+        boxShadow: '0 10px 40px rgba(0,0,0,0.2)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ fontSize: '1.2rem', margin: 0, fontWeight: 700 }}>추천템 수정</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}><X size={24} color="#64748B" /></button>
+        </div>
+
+        <div 
+          onClick={() => fileInputRef.current?.click()}
+          style={{ width: '100%', height: '200px', borderRadius: '16px', background: '#F1F5F9', overflow: 'hidden', position: 'relative', cursor: 'pointer' }}
+        >
+          <img src={photoPreview} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="미리보기" />
+          <div style={{ position: 'absolute', bottom: '10px', right: '10px', background: 'white', padding: '10px', borderRadius: '50%', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+            <Edit2 size={20} color="var(--primary)" />
+          </div>
+        </div>
+        <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoChange} style={{ display: 'none' }} />
+
+        <div>
+          <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '8px' }}>물품명 (필수)</label>
+          <input className="text-input" value={name} onChange={e => setName(e.target.value)} />
+        </div>
+
+        <div>
+          <label style={{ display: 'block', fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '8px' }}>판매 장소 / 부스</label>
+          <input className="text-input" value={location} onChange={e => setLocation(e.target.value)} placeholder="예: HALL C 123" />
+        </div>
+
+        <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+          <button onClick={onClose} style={{ flex: 1, padding: '14px', borderRadius: '12px', background: '#F1F5F9', color: '#64748B', fontWeight: 600, border: 'none', cursor: 'pointer' }}>취소</button>
+          <button onClick={handleSave} disabled={loading} className="btn btn-primary" style={{ flex: 2, padding: '14px', borderRadius: '12px', opacity: loading ? 0.7 : 1 }}>
+            {loading ? '저장 중...' : '저장 완료'}
+          </button>
+        </div>
       </div>
     </div>
   );
