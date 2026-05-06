@@ -29,6 +29,7 @@ const Feed = () => {
   const [submittingComment, setSubmittingComment] = useState<{ [key: number]: boolean }>({});
   const [showMap, setShowMap] = useState(false);
   const [mapUrl, setMapUrl] = useState<string | null>(null);
+  const [mapFileName, setMapFileName] = useState<string>('');
   const [uploadingMap, setUploadingMap] = useState(false);
   const [isFullscreenMapOpen, setIsFullscreenMapOpen] = useState(false);
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
@@ -168,7 +169,17 @@ const Feed = () => {
         .maybeSingle();
 
       if (error) throw error;
-      if (data) setMapUrl(data.image_url);
+      if (data) {
+        const val = data.image_url;
+        if (val && val.includes('|')) {
+          const [url, name] = val.split('|');
+          setMapUrl(url);
+          setMapFileName(name);
+        } else {
+          setMapUrl(val);
+          setMapFileName('');
+        }
+      }
     } catch (error) {
       console.error('Error fetching map:', error);
     }
@@ -241,30 +252,37 @@ const Feed = () => {
 
 
 
-  const compressImage = async (file: File, maxWidth = 2000, quality = 0.85): Promise<Blob> => {
-    try {
-      // createImageBitmap은 브라우저 백그라운드에서 하드웨어 가속으로 이미지를 초고속 디코딩합니다.
-      // 기존 Image 객체나 FileReader 대비 메모리 누수와 브라우저 락업 현상을 완전히 예방합니다.
-      const imageBitmap = await createImageBitmap(file);
-      const canvas = document.createElement('canvas');
-      let width = imageBitmap.width;
-      let height = imageBitmap.height;
+  const compressImage = (file: File, maxWidth = 3600, quality = 0.95): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const img = new window.Image();
+      const objectUrl = URL.createObjectURL(file);
 
-      if (width > maxWidth) {
-        height = Math.round((height * maxWidth) / width);
-        width = maxWidth;
-      }
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
 
-      canvas.width = width;
-      canvas.height = height;
+        // 원내 구형 PC 및 브라우저의 메모리 렉 예방을 위해 최적 해상도로 부드럽게 제한 (기본 3600px로 극상 화질 제공)
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
 
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(imageBitmap, 0, 0, width, height);
-      imageBitmap.close(); // 메모리 즉시 해제
+        canvas.width = width;
+        canvas.height = height;
 
-      return new Promise((resolve, reject) => {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          // PNG 투명 배경이 검은색으로 깨지는 현상을 방지하고 고대비 가독성을 위해 배경을 흰색(#FFFFFF)으로 사전 채움
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+        }
+
         canvas.toBlob(
           (blob) => {
+            // 드로잉이 완전히 끝나고 블롭 변환 단계에서 안전하게 메모리 해제
+            URL.revokeObjectURL(objectUrl);
             if (blob) {
               resolve(blob);
             } else {
@@ -274,10 +292,24 @@ const Feed = () => {
           'image/jpeg',
           quality
         );
-      });
-    } catch (err) {
-      throw new Error('이미지를 읽을 수 없습니다. 인쇄용 CMYK 포맷이거나 파일이 손상되었는지 확인해 주세요.');
-    }
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        // 만약 초고해상도(3600px) 로딩에 실패한 경우, 더 가벼운 1800px로 다운그레이드
+        if (maxWidth > 1800) {
+          console.warn('1차 초고해상도(3600px) PNG 로딩 실패로 1800px 모드로 재시도합니다.');
+          compressImage(file, 1800, 0.9).then(resolve).catch(reject);
+        } else if (maxWidth > 1000) {
+          console.warn('2차 고해상도(1800px) PNG 로딩 실패로 1000px 모드로 재시도합니다.');
+          compressImage(file, 1000, 0.8).then(resolve).catch(reject);
+        } else {
+          reject(new Error('이미지 파일 해상도가 비정상적으로 높거나 손상되었습니다.'));
+        }
+      };
+
+      img.src = objectUrl;
+    });
   };
 
   const handleMapUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -290,12 +322,22 @@ const Feed = () => {
       let fileName = `map-${Date.now()}.${file.name.split('.').pop() || 'jpg'}`;
 
       try {
-        // 대용량 지도로 인한 Supabase 용량 제한을 방지하기 위해 1차로 안전한 압축 시도
-        const compressedBlob = await compressImage(file, 2000, 0.85); // 지도는 가독성을 위해 가로 최대 2000px 유지
-        fileToUpload = new File([compressedBlob], `map-${Date.now()}.jpg`, { type: 'image/jpeg' });
-        fileName = `map-${Date.now()}.jpg`;
+        // 대용량 지도로 인한 Supabase 용량 제한을 방지하기 위해 1차로 안전한 압축 시도 (기본 3600px 초고화질)
+        const compressedBlob = await compressImage(file, 3600, 0.95);
+        const uploadName = `map-${Date.now()}.jpg`;
+        fileToUpload = new File([compressedBlob], uploadName, { type: 'image/jpeg' });
+        fileName = uploadName;
       } catch (compressionError) {
-        console.warn('이미지 압축 중 실패 발생 (HEIC, PDF 또는 특수 포맷의 경우): 원본 파일로 즉시 대체 업로드합니다.', compressionError);
+        console.warn('이미지 압축 중 실패 발생 (HEIC, PDF, CMYK 포맷의 경우): 브라우저가 읽지 못해 원본 파일로 즉시 대체 업로드합니다.', compressionError);
+        
+        // 브라우저가 못 읽는데 용량마저 6MB가 넘으면 Supabase 스토리지나 방화벽에서 100% 차단(ERR_CONNECTION_RESET)되므로 사전 경고
+        if (file.size > 6 * 1024 * 1024) {
+          throw new Error('이 파일은 브라우저가 압축할 수 없는 특수 포맷(인쇄용 CMYK, HEIC 등)이면서 동시에 파일 용량(6MB 초과)이 너무 커서 서버 방화벽에 의해 전송이 차단되었습니다.');
+        }
+
+        const ext = file.name.split('.').pop() || 'png';
+        fileName = `map-${Date.now()}.${ext}`;
+        fileToUpload = file;
       }
 
       const filePath = `public/${fileName}`;
@@ -310,17 +352,21 @@ const Feed = () => {
         .from('sidex_images')
         .getPublicUrl(filePath);
 
+      // 업로드 URL과 원래 올렸던 오리지널 한글 파일명을 파이프(|) 구분자로 합쳐서 DB에 안전 저장
+      const dbValue = `${publicUrl}|${file.name}`;
+
       const { error: dbError } = await supabase
         .from('sidex_map')
-        .upsert({ id: 1, image_url: publicUrl });
+        .upsert({ id: 1, image_url: dbValue });
 
       if (dbError) throw dbError;
 
       setMapUrl(publicUrl);
+      setMapFileName(file.name);
       alert('지도가 성공적으로 업데이트되었습니다! 🗺️');
     } catch (error: any) {
       console.error('Error uploading map:', error);
-      alert(`지도 업로드에 실패했습니다.\n사유: ${error.message || '네트워크 오류 또는 파일이 너무 큽니다.'}`);
+      alert(`🚨 지도 업로드 차단됨\n\n사유: ${error.message || '네트워크 오류 또는 파일이 너무 큽니다.'}\n\n💡 해결 방법:\n해당 PNG 파일은 인쇄용 특수 포맷이거나 용량이 너무 큽니다. 그림판, 캡처 도구, 또는 맥의 미리보기 프로그램에서 해당 지도를 여신 후 [JPG (또는 JPEG)] 포맷으로 '다른 이름으로 저장' 하셔서 다시 올려주시면 1초 만에 등록됩니다!`);
     } finally {
       setUploadingMap(false);
     }
@@ -466,8 +512,31 @@ const Feed = () => {
                 alt="전시장 지도" 
                 style={{ width: '100%', maxHeight: '400px', objectFit: 'contain', display: 'block', transition: 'transform 0.2s' }} 
               />
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'center', marginTop: '8px' }}>
-                💡 이미지를 클릭하면 전체 화면에서 손가락으로 확대해 볼 수 있습니다.
+              <div style={{ 
+                fontSize: '0.8rem', 
+                color: 'var(--text-muted)', 
+                textAlign: 'center', 
+                marginTop: '10px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+                alignItems: 'center'
+              }}>
+                <span style={{ 
+                  fontWeight: 600, 
+                  color: 'var(--primary)', 
+                  background: 'var(--primary-light)', 
+                  padding: '4px 12px', 
+                  borderRadius: '12px',
+                  fontSize: '0.75rem',
+                  maxWidth: '90%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}>
+                  현재 등록 파일: {mapFileName || '전시장 지도'}
+                </span>
+                <span>💡 이미지를 클릭하면 전체 화면에서 확대해 볼 수 있습니다.</span>
               </div>
             </div>
           ) : (
