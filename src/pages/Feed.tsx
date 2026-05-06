@@ -1181,13 +1181,46 @@ interface FullscreenMapProps {
 const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose }) => {
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  
+  // 모바일/PC 드래그 제어
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
   const touchStartRef = useRef<{ x: number; y: number }[]>([]);
   const startDistRef = useRef(0);
   const startScaleRef = useRef(1);
   const startPosRef = useRef({ x: 0, y: 0 });
+  const lastTouchTimeRef = useRef(0);
 
+  // 더블 클릭/더블 탭 토글 줌
+  const handleZoomToggle = (clientX: number, clientY: number) => {
+    if (scale > 1) {
+      setScale(1);
+      setPosition({ x: 0, y: 0 });
+    } else {
+      setScale(3);
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
+      const dx = (windowWidth / 2 - clientX) * 2;
+      const dy = (windowHeight / 2 - clientY) * 2;
+      setPosition({ x: dx, y: dy });
+    }
+  };
+
+  // 모바일 터치 시작
   const handleTouchStart = (e: React.TouchEvent) => {
     const touches = Array.from(e.touches);
+    const now = Date.now();
+
+    // 더블 탭 감지 (300ms 이내 두 번 탭)
+    if (touches.length === 1 && now - lastTouchTimeRef.current < 300) {
+      handleZoomToggle(touches[0].clientX, touches[0].clientY);
+      lastTouchTimeRef.current = 0;
+      return;
+    }
+    if (touches.length === 1) {
+      lastTouchTimeRef.current = now;
+    }
+
     if (touches.length === 1) {
       touchStartRef.current = [{ x: touches[0].clientX, y: touches[0].clientY }];
       startPosRef.current = { ...position };
@@ -1205,6 +1238,7 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
     }
   };
 
+  // 모바일 터치 이동
   const handleTouchMove = (e: React.TouchEvent) => {
     const touches = Array.from(e.touches);
     if (touches.length === 1 && touchStartRef.current.length === 1) {
@@ -1220,7 +1254,8 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
         touches[0].clientY - touches[1].clientY
       );
       const factor = currentDist / startDistRef.current;
-      const newScale = Math.max(1, Math.min(startScaleRef.current * factor, 5));
+      // 최대 15배 줌으로 상향 조정
+      const newScale = Math.max(1, Math.min(startScaleRef.current * factor, 15));
       setScale(newScale);
 
       const centerX = (touches[0].clientX + touches[1].clientX) / 2;
@@ -1241,6 +1276,44 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
     if (scale <= 1) {
       setPosition({ x: 0, y: 0 });
     }
+  };
+
+  // PC 마우스 휠 줌 (최대 15배)
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomFactor = 1.15;
+    let newScale = scale;
+    if (e.deltaY < 0) {
+      newScale = Math.min(scale * zoomFactor, 15);
+    } else {
+      newScale = Math.max(1, scale / zoomFactor);
+    }
+    setScale(newScale);
+    if (newScale <= 1) {
+      setPosition({ x: 0, y: 0 });
+    }
+  };
+
+  // PC 마우스 드래그 시작 (패닝)
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (scale > 1) {
+      setIsDragging(true);
+      dragStartRef.current = { x: e.clientX - position.x, y: e.clientY - position.y };
+    }
+  };
+
+  // PC 마우스 드래그 이동
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging && scale > 1) {
+      setPosition({
+        x: e.clientX - dragStartRef.current.x,
+        y: e.clientY - dragStartRef.current.y
+      });
+    }
+  };
+
+  const handleMouseUpOrLeave = () => {
+    setIsDragging(false);
   };
 
   const reset = () => {
@@ -1264,6 +1337,11 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
         touchAction: 'none',
         overflow: 'hidden'
       }}
+      onWheel={handleWheel}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUpOrLeave}
+      onMouseLeave={handleMouseUpOrLeave}
     >
       <div style={{
         position: 'absolute',
@@ -1314,12 +1392,14 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onDoubleClick={(e) => handleZoomToggle(e.clientX, e.clientY)}
         style={{
           width: '100%',
           height: '100%',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
+          cursor: scale > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'
         }}
       >
         <img 
@@ -1330,7 +1410,7 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
             maxHeight: '100%',
             objectFit: 'contain',
             transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-            transition: touchStartRef.current.length === 0 ? 'transform 0.15s ease-out' : 'none',
+            transition: (touchStartRef.current.length === 0 && !isDragging) ? 'transform 0.15s ease-out' : 'none',
             userSelect: 'none'
           }} 
         />
@@ -1344,9 +1424,13 @@ const FullscreenMapModal: React.FC<FullscreenMapProps> = ({ imageUrl, onClose })
         textAlign: 'center',
         pointerEvents: 'none',
         zIndex: 1010,
-        textShadow: '0 1px 4px rgba(0,0,0,0.8)'
+        textShadow: '0 1px 4px rgba(0,0,0,0.8)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px'
       }}>
-        두 손가락으로 늘려 확대하고, 밀어서 이동하세요.
+        <span>📱 모바일: 두 손가락 핀치 줌 / 더블 탭 토글 줌</span>
+        <span>💻 PC: 마우스 휠 스크롤 줌 / 드래그 이동 / 더블 클릭 토글 줌</span>
       </div>
     </div>
   );
