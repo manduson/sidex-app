@@ -92,13 +92,27 @@ const Feed = () => {
   const handleDelete = async (id: number) => {
     if (!window.confirm('정말 이 추천템을 삭제하시겠습니까?')) return;
     try {
-      const { error } = await supabase.from('sidex_items').delete().eq('id', id);
+      // 1. 해당 추천템에 연결된 모든 댓글 먼저 삭제 (외래키 제약조건 위반 방지)
+      const { error: commentError } = await supabase
+        .from('sidex_comments')
+        .delete()
+        .eq('item_id', id);
+
+      if (commentError) throw commentError;
+
+      // 2. 추천템 삭제
+      const { error } = await supabase
+        .from('sidex_items')
+        .delete()
+        .eq('id', id);
+
       if (error) throw error;
+
       setItems(prev => prev.filter(item => item.id !== id));
       alert('삭제되었습니다.');
     } catch (error) {
       console.error('Error deleting item:', error);
-      alert('삭제에 실패했습니다.');
+      alert('삭제에 실패했습니다. (댓글이나 게시글에 대한 삭제 권한이 없거나 데이터베이스 에러가 발생했습니다)');
     }
   };
 
