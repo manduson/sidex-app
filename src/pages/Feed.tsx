@@ -1,4 +1,6 @@
+/* eslint-disable react-hooks/refs, @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useNavigate } from 'react-router-dom';
 import { PlusCircle, MapPin, MessageSquare, Image, ChevronDown, ChevronUp, Upload, MoreVertical, Edit2, Trash2, X, Heart } from 'lucide-react';
@@ -22,14 +24,181 @@ interface SidexItem {
   isLikedByMe?: boolean;
 }
 
+interface ImageSliderProps {
+  image_url: string;
+  item_name: string;
+}
+
+const ImageSlider: React.FC<ImageSliderProps> = ({ image_url, item_name }) => {
+  const urls = image_url ? image_url.split(',') : [];
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const touchStartRef = useRef<number | null>(null);
+
+  if (urls.length === 0) return null;
+  if (urls.length === 1) {
+    return <img src={urls[0]} alt={item_name} style={{ width: '100%', height: '280px', objectFit: 'cover', display: 'block' }} />;
+  }
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartRef.current = e.touches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (touchStartRef.current === null) return;
+    const diff = touchStartRef.current - e.touches[0].clientX;
+    
+    // 왼쪽으로 스와이프 (다음 사진)
+    if (diff > 50) {
+      handleNext();
+      touchStartRef.current = null;
+    }
+    // 오른쪽으로 스와이프 (이전 사진)
+    else if (diff < -50) {
+      handlePrev();
+      touchStartRef.current = null;
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartRef.current = null;
+  };
+
+  const handleNext = () => {
+    setCurrentIndex((prev) => (prev + 1) % urls.length);
+  };
+
+  const handlePrev = () => {
+    setCurrentIndex((prev) => (prev - 1 + urls.length) % urls.length);
+  };
+
+  return (
+    <div 
+      style={{ position: 'relative', width: '100%', height: '280px', overflow: 'hidden', background: '#F8FAFC' }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* 슬라이드 이미지 컨테이너 */}
+      <div style={{
+        display: 'flex',
+        width: `${urls.length * 100}%`,
+        height: '100%',
+        transform: `translateX(-${(currentIndex * 100) / urls.length}%)`,
+        transition: 'transform 0.3s cubic-bezier(0.25, 1, 0.5, 1)'
+      }}>
+        {urls.map((url, idx) => (
+          <div key={idx} style={{ width: '100%', height: '100%', flexShrink: 0 }}>
+            <img src={url} alt={`${item_name} ${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          </div>
+        ))}
+      </div>
+
+      {/* 좌우 탐색 단추 */}
+      <button 
+        onClick={handlePrev}
+        style={{
+          position: 'absolute',
+          left: '10px',
+          top: '50%',
+          transform: 'translateY(-50%)',
+          background: 'rgba(255,255,255,0.7)',
+          backdropFilter: 'blur(4px)',
+          border: 'none',
+          borderRadius: '50%',
+          width: '32px',
+          height: '32px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          zIndex: 2,
+          fontSize: '14px',
+          fontWeight: 'bold',
+          color: '#1E293B'
+        }}
+      >
+        ‹
+      </button>
+      <button 
+        onClick={handleNext}
+        style={{
+          position: 'absolute',
+          right: '10px',
+          top: '50%',
+          transform: 'translateY(-50%)',
+          background: 'rgba(255,255,255,0.7)',
+          backdropFilter: 'blur(4px)',
+          border: 'none',
+          borderRadius: '50%',
+          width: '32px',
+          height: '32px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          zIndex: 2,
+          fontSize: '14px',
+          fontWeight: 'bold',
+          color: '#1E293B'
+        }}
+      >
+        ›
+      </button>
+
+      {/* 슬라이드 도트 인디케이터 */}
+      <div style={{
+        position: 'absolute',
+        bottom: '12px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        gap: '6px',
+        zIndex: 2,
+        background: 'rgba(0,0,0,0.3)',
+        padding: '4px 8px',
+        borderRadius: '10px',
+        backdropFilter: 'blur(2px)'
+      }}>
+        {urls.map((_, idx) => (
+          <div 
+            key={idx} 
+            style={{
+              width: currentIndex === idx ? '8px' : '6px',
+              height: currentIndex === idx ? '8px' : '6px',
+              borderRadius: '50%',
+              background: currentIndex === idx ? '#FFFFFF' : 'rgba(255,255,255,0.5)',
+              transition: 'all 0.2s'
+            }}
+          />
+        ))}
+      </div>
+
+      {/* 우측 상단 현재 페이지 카운터 */}
+      <div style={{
+        position: 'absolute',
+        top: '12px',
+        right: '12px',
+        background: 'rgba(0,0,0,0.6)',
+        color: 'white',
+        fontSize: '0.75rem',
+        fontWeight: 600,
+        padding: '4px 8px',
+        borderRadius: '12px',
+        zIndex: 2
+      }}>
+        {currentIndex + 1}/{urls.length}
+      </div>
+    </div>
+  );
+};
+
 const Feed = () => {
-  const [items, setItems] = useState<SidexItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [commentInputs, setCommentInputs] = useState<{ [key: number]: string }>({});
   const [submittingComment, setSubmittingComment] = useState<{ [key: number]: boolean }>({});
   const [showMap, setShowMap] = useState(false);
-  const [mapUrl, setMapUrl] = useState<string | null>(null);
-  const [mapFileName, setMapFileName] = useState<string>('');
   const [uploadingMap, setUploadingMap] = useState(false);
   const [isFullscreenMapOpen, setIsFullscreenMapOpen] = useState(false);
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
@@ -39,6 +208,75 @@ const Feed = () => {
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
   const [selectedUserFilter, setSelectedUserFilter] = useState<string | null>(null);
+
+  const { data: isServerOn = true } = useQuery({
+    queryKey: ['serverStatus'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('sidex_map').select('image_url').eq('id', 3).maybeSingle();
+      if (error) throw error;
+      return data ? data.image_url === 'ON' : true;
+    }
+  });
+
+  const { data: mapData } = useQuery({
+    queryKey: ['mapData'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('sidex_map').select('image_url').eq('id', 1).maybeSingle();
+      if (error && error.code !== 'PGRST116') throw error;
+      if (!data?.image_url) return { url: null, name: '' };
+      const parts = data.image_url.split('|');
+      return { url: parts[0], name: parts.length > 1 ? parts[1] : '' };
+    }
+  });
+  const mapUrl = mapData?.url || null;
+  const mapFileName = mapData?.name || '';
+
+  const { data: items = [], isLoading: loading } = useQuery({
+    queryKey: ['feedItems'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('sidex_items')
+        .select('*, sidex_comments(*)')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      const currentNickname = localStorage.getItem('sidex_nickname') || '';
+
+      return (data || []).map((item: any) => {
+        const rawComments = item.sidex_comments || [];
+        const likes = rawComments.filter((c: any) => c.content === '__LIKE__');
+        const actualComments = rawComments.filter((c: any) => c.content !== '__LIKE__');
+
+        return {
+          ...item,
+          likesCount: likes.length,
+          isLikedByMe: likes.some((c: any) => c.commenter_name === currentNickname),
+          sidex_comments: actualComments.sort(
+            (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+          )
+        };
+      });
+    }
+  });
+
+  const handleToggleServer = async () => {
+    const nextState = !isServerOn;
+    // 낙관적 업데이트
+    queryClient.setQueryData(['serverStatus'], nextState);
+
+    try {
+      const { error } = await supabase
+        .from('sidex_map')
+        .upsert({ id: 3, image_url: nextState ? 'ON' : 'OFF' });
+
+      if (error) throw error;
+    } catch (err) {
+      console.error('Error updating server status:', err);
+      alert('서버 상태 변경에 실패했습니다.');
+      queryClient.setQueryData(['serverStatus'], !nextState);
+    }
+  };
 
   const getActiveUsers = () => {
     const usersSet = new Set<string>();
@@ -68,62 +306,10 @@ const Feed = () => {
       return;
     }
     setNickname(savedNickname);
-
-    fetchItems();
-    fetchMap();
-
-    // 실시간 업데이트 구독 (물품, 댓글, 지도 변경 시 새로고침)
-    const itemsSubscription = supabase
-      .channel('public:changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sidex_items' }, () => {
-        fetchItems();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sidex_comments' }, () => {
-        fetchItems();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sidex_map' }, () => {
-        fetchMap();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(itemsSubscription);
-    };
+    // 안 A: 실시간 구독 제거 (TanStack Query 캐싱으로 대체)
   }, [navigate]);
 
-  const fetchItems = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('sidex_items')
-        .select('*, sidex_comments(*)')
-        .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      
-      const currentNickname = nickname || localStorage.getItem('sidex_nickname') || '';
-
-      const formattedData = (data || []).map((item: any) => {
-        const rawComments = item.sidex_comments || [];
-        const likes = rawComments.filter((c: any) => c.content === '__LIKE__');
-        const actualComments = rawComments.filter((c: any) => c.content !== '__LIKE__');
-
-        return {
-          ...item,
-          likesCount: likes.length,
-          isLikedByMe: likes.some((c: any) => c.commenter_name === currentNickname),
-          sidex_comments: actualComments.sort(
-            (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-          )
-        };
-      });
-
-      setItems(formattedData);
-    } catch (error) {
-      console.error('Error fetching items:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleDelete = async (id: number) => {
     if (!window.confirm('정말 이 추천템을 삭제하시겠습니까?')) return;
@@ -152,36 +338,11 @@ const Feed = () => {
         return;
       }
 
-      setItems(prev => prev.filter(item => item.id !== id));
+      queryClient.invalidateQueries({ queryKey: ['feedItems'] });
       alert('삭제되었습니다.');
     } catch (err: any) {
       console.error('Error deleting item:', err);
       alert('삭제 실패 원인: ' + (err?.message || JSON.stringify(err) || '알 수 없는 에러'));
-    }
-  };
-
-  const fetchMap = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('sidex_map')
-        .select('image_url')
-        .eq('id', 1)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (data) {
-        const val = data.image_url;
-        if (val && val.includes('|')) {
-          const [url, name] = val.split('|');
-          setMapUrl(url);
-          setMapFileName(name);
-        } else {
-          setMapUrl(val);
-          setMapFileName('');
-        }
-      }
-    } catch (error) {
-      console.error('Error fetching map:', error);
     }
   };
 
@@ -218,6 +379,21 @@ const Feed = () => {
       const currentNickname = nickname || localStorage.getItem('sidex_nickname') || '';
       if (!currentNickname) return;
 
+      // 안 A: 낙관적 업데이트
+      queryClient.setQueryData(['feedItems'], (oldData: any) => {
+        if (!oldData) return oldData;
+        return oldData.map((item: any) => {
+          if (item.id === itemId) {
+            return {
+              ...item,
+              isLikedByMe: !isLikedByMe,
+              likesCount: !isLikedByMe ? (item.likesCount || 0) + 1 : Math.max(0, (item.likesCount || 0) - 1)
+            };
+          }
+          return item;
+        });
+      });
+
       if (isLikedByMe) {
         // 이미 추천한 경우: __LIKE__ 댓글 삭제
         const { error } = await supabase
@@ -243,10 +419,12 @@ const Feed = () => {
         if (error) throw error;
       }
       
-      // 즉시 화면 데이터 동기화
-      fetchItems();
+      // 서버 데이터 최신화 (백그라운드 갱신)
+      queryClient.invalidateQueries({ queryKey: ['feedItems'] });
     } catch (error) {
       console.error('Error toggling like:', error);
+      // 에러 발생 시 원래 상태로 복구
+      queryClient.invalidateQueries({ queryKey: ['feedItems'] });
     }
   };
 
@@ -361,8 +539,8 @@ const Feed = () => {
 
       if (dbError) throw dbError;
 
-      setMapUrl(publicUrl);
-      setMapFileName(file.name);
+      // 데이터 무효화하여 새로운 맵 정보를 캐시 갱신
+      queryClient.invalidateQueries({ queryKey: ['mapData'] });
       alert('지도가 성공적으로 업데이트되었습니다! 🗺️');
     } catch (error: any) {
       console.error('Error uploading map:', error);
@@ -382,12 +560,111 @@ const Feed = () => {
     );
   }
 
+  if (!isServerOn && nickname !== '만두') {
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        minHeight: '70vh',
+        textAlign: 'center',
+        padding: '40px 20px',
+        gap: '16px'
+      }}>
+        <div style={{
+          fontSize: '4rem',
+          animation: 'bounce 2s infinite',
+          marginBottom: '10px'
+        }}>
+          ⚠️
+        </div>
+        <h2 style={{
+          fontSize: '1.4rem',
+          fontWeight: 700,
+          color: 'var(--text-main)',
+          margin: 0
+        }}>
+          지금은 서버를 이용할 수 없습니다.
+        </h2>
+        <p style={{
+          fontSize: '0.95rem',
+          color: 'var(--text-muted)',
+          margin: 0,
+          lineHeight: '1.6',
+          maxWidth: '300px'
+        }}>
+          서버가 일시 중지된 상태이거나 점검 중입니다. 원장님/관리자에게 문의해 주세요.
+        </p>
+        <button
+          onClick={() => {
+            localStorage.removeItem('sidex_nickname');
+            navigate('/login');
+          }}
+          style={{
+            marginTop: '10px',
+            background: '#F1F5F9',
+            border: 'none',
+            padding: '10px 20px',
+            borderRadius: '8px',
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            color: '#64748B',
+            cursor: 'pointer'
+          }}
+        >
+          다른 계정으로 로그인
+        </button>
+        <style>{`
+          @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
   return (
     <div style={{ paddingBottom: '80px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
         <h2 style={{ fontSize: '1.2rem', fontWeight: 700 }}>원장님들의 추천템 모아보기</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>👤 {nickname}</span>
+          {nickname === '만두' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginRight: '6px' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: isServerOn ? '#10B981' : '#64748B' }}>
+                {isServerOn ? '서버 ON' : '서버 OFF'}
+              </span>
+              <button
+                onClick={handleToggleServer}
+                style={{
+                  width: '42px',
+                  height: '24px',
+                  borderRadius: '12px',
+                  background: isServerOn ? '#10B981' : '#CBD5E1',
+                  border: 'none',
+                  cursor: 'pointer',
+                  position: 'relative',
+                  padding: 0,
+                  transition: 'background-color 0.2s',
+                  outline: 'none'
+                }}
+              >
+                <div style={{
+                  width: '18px',
+                  height: '18px',
+                  borderRadius: '50%',
+                  background: 'white',
+                  position: 'absolute',
+                  top: '3px',
+                  left: isServerOn ? '21px' : '3px',
+                  transition: 'left 0.2s',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.2)'
+                }} />
+              </button>
+            </div>
+          )}
           {nickname === '만두' && (
             <button 
               onClick={handleChangePin}
@@ -752,7 +1029,7 @@ const Feed = () => {
         <div className="feed-grid" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {(selectedUserFilter ? items.filter(item => item.recommender_name === selectedUserFilter) : items).map(item => (
             <div key={item.id} className="feed-card" style={{ background: 'white', borderRadius: '16px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.05)', border: '1px solid var(--border)' }}>
-              <img src={item.image_url} alt={item.item_name} style={{ width: '100%', height: '250px', objectFit: 'cover' }} />
+              <ImageSlider image_url={item.image_url} item_name={item.item_name} />
               
               {/* 인스타그램 감성 하트 & 좋아요 액션 바 */}
               <div style={{ 
@@ -942,7 +1219,7 @@ const Feed = () => {
           onClose={() => setEditingItem(null)} 
           onSuccess={() => {
             setEditingItem(null);
-            fetchItems(); // 목록 갱신
+            queryClient.invalidateQueries({ queryKey: ['feedItems'] });
           }}
         />
       )}
@@ -958,7 +1235,6 @@ const Feed = () => {
           setCommentInputs={setCommentInputs}
           submittingComment={submittingComment}
           setSubmittingComment={setSubmittingComment}
-          fetchItems={fetchItems}
         />
       )}
     </div>
@@ -975,7 +1251,6 @@ interface CommentsBottomSheetProps {
   setCommentInputs: React.Dispatch<React.SetStateAction<{ [key: number]: string }>>;
   submittingComment: { [key: number]: boolean };
   setSubmittingComment: React.Dispatch<React.SetStateAction<{ [key: number]: boolean }>>;
-  fetchItems: () => Promise<void>;
 }
 
 const CommentsBottomSheetModal: React.FC<CommentsBottomSheetProps> = ({
@@ -986,9 +1261,9 @@ const CommentsBottomSheetModal: React.FC<CommentsBottomSheetProps> = ({
   commentInputs,
   setCommentInputs,
   submittingComment,
-  setSubmittingComment,
-  fetchItems
+  setSubmittingComment
 }) => {
+  const queryClient = useQueryClient();
   const item = items.find(i => i.id === itemId);
   if (!item) return null;
 
@@ -997,6 +1272,28 @@ const CommentsBottomSheetModal: React.FC<CommentsBottomSheetProps> = ({
     if (!commentContent) return;
 
     setSubmittingComment(prev => ({ ...prev, [itemId]: true }));
+
+    // 낙관적 업데이트
+    queryClient.setQueryData(['feedItems'], (oldData: any) => {
+      if (!oldData) return oldData;
+      return oldData.map((oldItem: any) => {
+        if (oldItem.id === itemId) {
+          return {
+            ...oldItem,
+            sidex_comments: [
+              ...(oldItem.sidex_comments || []),
+              {
+                id: Date.now(), // 임시 UI 표시용 ID
+                commenter_name: nickname,
+                content: commentContent,
+                created_at: new Date().toISOString()
+              }
+            ]
+          };
+        }
+        return oldItem;
+      });
+    });
 
     try {
       const { error } = await supabase
@@ -1013,12 +1310,13 @@ const CommentsBottomSheetModal: React.FC<CommentsBottomSheetProps> = ({
 
       // 입력창 비우기
       setCommentInputs(prev => ({ ...prev, [itemId]: '' }));
-      await fetchItems(); // 댓글 목록 갱신
     } catch (error) {
       console.error('Error adding comment:', error);
       alert('댓글 등록에 실패했습니다.');
     } finally {
       setSubmittingComment(prev => ({ ...prev, [itemId]: false }));
+      // 백그라운드 서버 재동기화
+      queryClient.invalidateQueries({ queryKey: ['feedItems'] });
     }
   };
 
@@ -1447,7 +1745,7 @@ const EditItemModal: React.FC<EditItemProps> = ({ item, onClose, onSuccess }) =>
   const [name, setName] = useState(item.item_name);
   const [location, setLocation] = useState(item.location || '');
   const [photo, setPhoto] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState<string>(item.image_url);
+  const [photoPreview, setPhotoPreview] = useState<string>(item.image_url ? item.image_url.split(',')[0] : '');
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 

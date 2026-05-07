@@ -1,14 +1,24 @@
-
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Login from './pages/Login';
 import Feed from './pages/Feed';
 import AddItem from './pages/AddItem';
 import { isConfigured } from './lib/supabase';
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000, // 5분 캐싱
+      refetchOnWindowFocus: false, // 창 포커스 시 재요청 끄기 (Egress 최소화)
+    },
+  },
+});
+
 function App() {
   return (
-    <BrowserRouter>
-      <div className="app-container">
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <div className="app-container">
         <div className="header">
           <h1 style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             ✨ 원장님 추천템 모음집 
@@ -48,6 +58,7 @@ function App() {
         </div>
       </div>
     </BrowserRouter>
+    </QueryClientProvider>
   );
 }
 
