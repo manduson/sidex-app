@@ -22,6 +22,7 @@ interface SidexItem {
   sidex_comments?: SidexComment[];
   likesCount?: number;
   isLikedByMe?: boolean;
+  likedBy?: string[];
 }
 
 interface ImageSliderProps {
@@ -29,21 +30,167 @@ interface ImageSliderProps {
   item_name: string;
 }
 
+// 핀치 투 줌 & 팬 기능이 탑재된 이미지 컴포넌트
+interface PinchZoomImageProps {
+  src: string;
+  alt: string;
+  style?: React.CSSProperties;
+  onZoomChange?: (zooming: boolean) => void;
+}
+
+const PinchZoomImage: React.FC<PinchZoomImageProps> = ({ src, alt, style, onZoomChange }) => {
+  const [scale, setScale] = useState(1);
+  const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  const [isZooming, setIsZooming] = useState(false);
+
+  const touchStartRef = useRef<{ x: number; y: number }[]>([]);
+  const startDistRef = useRef(0);
+  const startCenterRef = useRef({ x: 0, y: 0 });
+
+  // 데스크톱 마우스 드래그 줌용
+  const [isMouseDown, setIsMouseDown] = useState(false);
+  const mouseDownPosRef = useRef({ x: 0, y: 0 });
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touches = Array.from(e.touches);
+    if (touches.length === 2) {
+      e.preventDefault();
+      setIsZooming(true);
+      onZoomChange?.(true);
+      
+      const t1 = { x: touches[0].clientX, y: touches[0].clientY };
+      const t2 = { x: touches[1].clientX, y: touches[1].clientY };
+      touchStartRef.current = [t1, t2];
+      
+      startDistRef.current = Math.hypot(t1.x - t2.x, t1.y - t2.y);
+      startCenterRef.current = { x: (t1.x + t2.x) / 2, y: (t1.y + t2.y) / 2 };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isZooming) return;
+    const touches = Array.from(e.touches);
+    if (touches.length === 2) {
+      e.preventDefault();
+      const t1 = { x: touches[0].clientX, y: touches[0].clientY };
+      const t2 = { x: touches[1].clientX, y: touches[1].clientY };
+
+      const currentDist = Math.hypot(t1.x - t2.x, t1.y - t2.y);
+      const currentCenter = { x: (t1.x + t2.x) / 2, y: (t1.y + t2.y) / 2 };
+
+      const newScale = Math.max(1, Math.min(currentDist / startDistRef.current, 4));
+      setScale(newScale);
+
+      const dx = currentCenter.x - startCenterRef.current.x;
+      const dy = currentCenter.y - startCenterRef.current.y;
+      setTranslate({ x: dx, y: dy });
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (isZooming) {
+      setIsZooming(false);
+      onZoomChange?.(false);
+    }
+    setScale(1);
+    setTranslate({ x: 0, y: 0 });
+    touchStartRef.current = [];
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0) { // 좌클릭
+      setIsMouseDown(true);
+      mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isMouseDown) return;
+    const dx = e.clientX - mouseDownPosRef.current.x;
+    const dy = e.clientY - mouseDownPosRef.current.y;
+    
+    const distance = Math.hypot(dx, dy);
+    if (distance > 15) {
+      if (!isZooming) {
+        setIsZooming(true);
+        onZoomChange?.(true);
+      }
+      setScale(1.5);
+      setTranslate({ x: dx * 0.5, y: dy * 0.5 });
+    }
+  };
+
+  const handleMouseUpOrLeave = () => {
+    setIsMouseDown(false);
+    if (isZooming) {
+      setIsZooming(false);
+      onZoomChange?.(false);
+    }
+    setScale(1);
+    setTranslate({ x: 0, y: 0 });
+  };
+
+  return (
+    <div 
+      style={{ 
+        position: 'relative', 
+        width: '100%', 
+        height: '100%',
+        zIndex: isZooming ? 999 : 1,
+        touchAction: 'none'
+      }}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUpOrLeave}
+      onMouseLeave={handleMouseUpOrLeave}
+    >
+      <img 
+        src={src} 
+        alt={alt} 
+        style={{
+          ...style,
+          transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+          transition: isZooming ? 'none' : 'transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1)',
+          transformOrigin: 'center center',
+          userSelect: 'none',
+          pointerEvents: 'none'
+        }} 
+      />
+    </div>
+  );
+};
+
 const ImageSlider: React.FC<ImageSliderProps> = ({ image_url, item_name }) => {
   const urls = image_url ? image_url.split(',') : [];
   const [currentIndex, setCurrentIndex] = useState(0);
+  const [zooming, setZooming] = useState(false);
   const touchStartRef = useRef<number | null>(null);
 
   if (urls.length === 0) return null;
   if (urls.length === 1) {
-    return <img src={urls[0]} alt={item_name} style={{ width: '100%', height: '280px', objectFit: 'cover', display: 'block' }} />;
+    return (
+      <div style={{ position: 'relative', width: '100%', height: '280px', overflow: zooming ? 'visible' : 'hidden', zIndex: zooming ? 999 : 1 }}>
+        <PinchZoomImage 
+          src={urls[0]} 
+          alt={item_name} 
+          style={{ width: '100%', height: '280px', objectFit: 'cover', display: 'block' }} 
+          onZoomChange={setZooming}
+        />
+      </div>
+    );
   }
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    if (zooming) return; // 이미지 줌 상태일 때는 슬라이드 전환을 차단합니다.
     touchStartRef.current = e.touches[0].clientX;
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    if (zooming) return; // 이미지 줌 상태일 때는 슬라이드 전환을 차단합니다.
     if (touchStartRef.current === null) return;
     const diff = touchStartRef.current - e.touches[0].clientX;
     
@@ -73,7 +220,14 @@ const ImageSlider: React.FC<ImageSliderProps> = ({ image_url, item_name }) => {
 
   return (
     <div 
-      style={{ position: 'relative', width: '100%', height: '280px', overflow: 'hidden', background: '#F8FAFC' }}
+      style={{ 
+        position: 'relative', 
+        width: '100%', 
+        height: '280px', 
+        overflow: zooming ? 'visible' : 'hidden', 
+        background: '#F8FAFC',
+        zIndex: zooming ? 999 : 1
+      }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
@@ -88,108 +242,121 @@ const ImageSlider: React.FC<ImageSliderProps> = ({ image_url, item_name }) => {
       }}>
         {urls.map((url, idx) => (
           <div key={idx} style={{ width: '100%', height: '100%', flexShrink: 0 }}>
-            <img src={url} alt={`${item_name} ${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            <PinchZoomImage 
+              src={url} 
+              alt={`${item_name} ${idx + 1}`} 
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+              onZoomChange={setZooming}
+            />
           </div>
         ))}
       </div>
 
-      {/* 좌우 탐색 단추 */}
-      <button 
-        onClick={handlePrev}
-        style={{
-          position: 'absolute',
-          left: '10px',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          background: 'rgba(255,255,255,0.7)',
-          backdropFilter: 'blur(4px)',
-          border: 'none',
-          borderRadius: '50%',
-          width: '32px',
-          height: '32px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          zIndex: 2,
-          fontSize: '14px',
-          fontWeight: 'bold',
-          color: '#1E293B'
-        }}
-      >
-        ‹
-      </button>
-      <button 
-        onClick={handleNext}
-        style={{
-          position: 'absolute',
-          right: '10px',
-          top: '50%',
-          transform: 'translateY(-50%)',
-          background: 'rgba(255,255,255,0.7)',
-          backdropFilter: 'blur(4px)',
-          border: 'none',
-          borderRadius: '50%',
-          width: '32px',
-          height: '32px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          zIndex: 2,
-          fontSize: '14px',
-          fontWeight: 'bold',
-          color: '#1E293B'
-        }}
-      >
-        ›
-      </button>
-
-      {/* 슬라이드 도트 인디케이터 */}
-      <div style={{
-        position: 'absolute',
-        bottom: '12px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        display: 'flex',
-        gap: '6px',
-        zIndex: 2,
-        background: 'rgba(0,0,0,0.3)',
-        padding: '4px 8px',
-        borderRadius: '10px',
-        backdropFilter: 'blur(2px)'
-      }}>
-        {urls.map((_, idx) => (
-          <div 
-            key={idx} 
+      {/* 좌우 탐색 단추 (확대 중에는 숨깁니다) */}
+      {!zooming && (
+        <>
+          <button 
+            onClick={handlePrev}
             style={{
-              width: currentIndex === idx ? '8px' : '6px',
-              height: currentIndex === idx ? '8px' : '6px',
+              position: 'absolute',
+              left: '10px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'rgba(255,255,255,0.7)',
+              backdropFilter: 'blur(4px)',
+              border: 'none',
               borderRadius: '50%',
-              background: currentIndex === idx ? '#FFFFFF' : 'rgba(255,255,255,0.5)',
-              transition: 'all 0.2s'
+              width: '32px',
+              height: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+              zIndex: 2,
+              fontSize: '14px',
+              fontWeight: 'bold',
+              color: '#1E293B'
             }}
-          />
-        ))}
-      </div>
+          >
+            ‹
+          </button>
+          <button 
+            onClick={handleNext}
+            style={{
+              position: 'absolute',
+              right: '10px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'rgba(255,255,255,0.7)',
+              backdropFilter: 'blur(4px)',
+              border: 'none',
+              borderRadius: '50%',
+              width: '32px',
+              height: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+              zIndex: 2,
+              fontSize: '14px',
+              fontWeight: 'bold',
+              color: '#1E293B'
+            }}
+          >
+            ›
+          </button>
+        </>
+      )}
 
-      {/* 우측 상단 현재 페이지 카운터 */}
-      <div style={{
-        position: 'absolute',
-        top: '12px',
-        right: '12px',
-        background: 'rgba(0,0,0,0.6)',
-        color: 'white',
-        fontSize: '0.75rem',
-        fontWeight: 600,
-        padding: '4px 8px',
-        borderRadius: '12px',
-        zIndex: 2
-      }}>
-        {currentIndex + 1}/{urls.length}
-      </div>
+      {/* 슬라이드 도트 인디케이터 (확대 중에는 숨깁니다) */}
+      {!zooming && (
+        <div style={{
+          position: 'absolute',
+          bottom: '12px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          gap: '6px',
+          zIndex: 2,
+          background: 'rgba(0,0,0,0.3)',
+          padding: '4px 8px',
+          borderRadius: '10px',
+          backdropFilter: 'blur(2px)'
+        }}>
+          {urls.map((_, idx) => (
+            <div 
+              key={idx} 
+              style={{
+                width: currentIndex === idx ? '8px' : '6px',
+                height: currentIndex === idx ? '8px' : '6px',
+                borderRadius: '50%',
+                background: currentIndex === idx ? '#FFFFFF' : 'rgba(255,255,255,0.5)',
+                transition: 'all 0.2s'
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 우측 상단 현재 페이지 카운터 (확대 중에는 숨깁니다) */}
+      {!zooming && (
+        <div style={{
+          position: 'absolute',
+          top: '12px',
+          right: '12px',
+          background: 'rgba(0,0,0,0.6)',
+          color: 'white',
+          fontSize: '0.75rem',
+          fontWeight: 600,
+          padding: '4px 8px',
+          borderRadius: '12px',
+          zIndex: 2
+        }}>
+          {currentIndex + 1}/{urls.length}
+        </div>
+      )}
     </div>
   );
 };
@@ -204,6 +371,7 @@ const Feed = () => {
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
   const [editingItem, setEditingItem] = useState<SidexItem | null>(null);
   const [activeCommentItemId, setActiveCommentItemId] = useState<number | null>(null);
+  const [activeLikesItemId, setActiveLikesItemId] = useState<number | null>(null);
   const mapInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const [nickname, setNickname] = useState('');
@@ -252,6 +420,7 @@ const Feed = () => {
           ...item,
           likesCount: likes.length,
           isLikedByMe: likes.some((c: any) => c.commenter_name === currentNickname),
+          likedBy: likes.map((c: any) => c.commenter_name),
           sidex_comments: actualComments.sort(
             (a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
           )
@@ -384,10 +553,16 @@ const Feed = () => {
         if (!oldData) return oldData;
         return oldData.map((item: any) => {
           if (item.id === itemId) {
+            const alreadyLiked = !!isLikedByMe;
+            const updatedLikedBy = alreadyLiked
+              ? (item.likedBy || []).filter((name: string) => name !== currentNickname)
+              : [...(item.likedBy || []), currentNickname];
+
             return {
               ...item,
               isLikedByMe: !isLikedByMe,
-              likesCount: !isLikedByMe ? (item.likesCount || 0) + 1 : Math.max(0, (item.likesCount || 0) - 1)
+              likesCount: !isLikedByMe ? (item.likesCount || 0) + 1 : Math.max(0, (item.likesCount || 0) - 1),
+              likedBy: updatedLikedBy
             };
           }
           return item;
@@ -1035,7 +1210,7 @@ const Feed = () => {
               <div style={{ 
                 display: 'flex', 
                 alignItems: 'center', 
-                gap: '12px', 
+                gap: '10px', 
                 padding: '12px 16px 0px 16px',
                 borderTop: '1px solid #FAFAFA'
               }}>
@@ -1058,9 +1233,81 @@ const Feed = () => {
                 >
                   <Heart size={24} fill={item.isLikedByMe ? '#FF2F40' : 'none'} style={{ transition: 'all 0.2s' }} />
                 </button>
-                <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#262626' }}>
-                  좋아요 {item.likesCount || 0}개
-                </span>
+
+                <div 
+                  onClick={() => item.likesCount && item.likesCount > 0 && setActiveLikesItemId(item.id)}
+                  style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '8px',
+                    cursor: (item.likesCount && item.likesCount > 0) ? 'pointer' : 'default',
+                    userSelect: 'none'
+                  }}
+                >
+                  {item.likedBy && item.likedBy.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      {item.likedBy.slice(0, 3).map((user: string, idx: number) => {
+                        const colors = [
+                          { bg: '#EEF2FF', text: '#4F46E5' },
+                          { bg: '#FDF2F8', text: '#DB2777' },
+                          { bg: '#ECFDF5', text: '#059669' },
+                          { bg: '#FFF7ED', text: '#EA580C' },
+                          { bg: '#FAF5FF', text: '#9333EA' }
+                        ];
+                        const colorIndex = (user.charCodeAt(0) + (user.charCodeAt(1) || 0)) % colors.length;
+                        const colorPair = colors[colorIndex];
+                        return (
+                          <div 
+                            key={user}
+                            style={{
+                              width: '24px',
+                              height: '24px',
+                              borderRadius: '50%',
+                              background: colorPair.bg,
+                              color: colorPair.text,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '0.65rem',
+                              fontWeight: 700,
+                              border: '1.5px solid white',
+                              marginLeft: idx > 0 ? '-8px' : '0',
+                              boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                              flexShrink: 0,
+                              zIndex: 3 - idx
+                            }}
+                          >
+                            {user.substring(0, 2)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <span style={{ 
+                    fontSize: '0.9rem', 
+                    fontWeight: 700, 
+                    color: '#262626',
+                    transition: 'opacity 0.2s'
+                  }}
+                  onMouseOver={(e) => {
+                    if (item.likesCount && item.likesCount > 0) {
+                      e.currentTarget.style.opacity = '0.7';
+                    }
+                  }}
+                  onMouseOut={(e) => {
+                    e.currentTarget.style.opacity = '1';
+                  }}
+                  >
+                    {(() => {
+                      const likedUsers = item.likedBy || [];
+                      if (likedUsers.length === 0) return '좋아요 0개';
+                      if (likedUsers.length === 1) return `${likedUsers[0]}님이 좋아합니다`;
+                      if (likedUsers.length === 2) return `${likedUsers[0]}님, ${likedUsers[1]}님이 좋아합니다`;
+                      return `${likedUsers[0]}님 외 ${likedUsers.length - 1}명이 좋아합니다`;
+                    })()}
+                  </span>
+                </div>
               </div>
 
               <div style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
@@ -1235,6 +1482,15 @@ const Feed = () => {
           setCommentInputs={setCommentInputs}
           submittingComment={submittingComment}
           setSubmittingComment={setSubmittingComment}
+        />
+      )}
+
+      {/* 인스타그램형 좋아요 목록 바텀 시트 */}
+      {activeLikesItemId !== null && (
+        <LikesBottomSheetModal 
+          itemId={activeLikesItemId} 
+          onClose={() => setActiveLikesItemId(null)} 
+          items={items}
         />
       )}
     </div>
@@ -1466,6 +1722,123 @@ const CommentsBottomSheetModal: React.FC<CommentsBottomSheetProps> = ({
           to { transform: translate(-50%, 0); }
         }
       `}</style>
+    </>
+  );
+};
+
+// 1_3. 인스타그램 감성 하프 바텀 시트 좋아요 명단 모달 컴포넌트
+interface LikesBottomSheetProps {
+  itemId: number;
+  onClose: () => void;
+  items: SidexItem[];
+}
+
+const LikesBottomSheetModal: React.FC<LikesBottomSheetProps> = ({
+  itemId,
+  onClose,
+  items
+}) => {
+  const item = items.find(i => i.id === itemId);
+  if (!item) return null;
+
+  const likedUsers = item.likedBy || [];
+
+  return (
+    <>
+      {/* 백드롭 어두운 배경 */}
+      <div 
+        onClick={onClose}
+        style={{
+          position: 'fixed',
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0, 0, 0, 0.4)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 1000,
+          animation: 'fadeIn 0.2s ease-out'
+        }}
+      />
+      
+      {/* 인스타그램형 바텀 시트 */}
+      <div 
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: '100%',
+          maxWidth: '500px',
+          height: '50vh',
+          background: 'white',
+          borderRadius: '24px 24px 0 0',
+          boxShadow: '0 -8px 32px rgba(0, 0, 0, 0.15)',
+          zIndex: 1001,
+          display: 'flex',
+          flexDirection: 'column',
+          animation: 'slideUp 0.3s cubic-bezier(0.1, 0.76, 0.55, 0.94)',
+          overflow: 'hidden'
+        }}
+      >
+        {/* 인스타용 상단 손잡이 핸들 */}
+        <div style={{ width: '100%', display: 'flex', justifyContent: 'center', padding: '10px 0 4px 0' }}>
+          <div style={{ width: '40px', height: '4px', background: '#E2E8F0', borderRadius: '2px' }} />
+        </div>
+
+        {/* 바텀 시트 헤더 */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '12px 20px',
+          borderBottom: '1px solid #F1F5F9'
+        }}>
+          <h3 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0, textAlign: 'center', flex: 1, marginLeft: '24px' }}>좋아요</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', padding: '4px', cursor: 'pointer' }}>
+            <X size={20} color="#64748B" />
+          </button>
+        </div>
+
+        {/* 좋아요 명단 리스트 영역 */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {likedUsers.length > 0 ? (
+            likedUsers.map((user, idx) => {
+              const colors = [
+                { bg: '#EEF2FF', text: '#4F46E5' },
+                { bg: '#FDF2F8', text: '#DB2777' },
+                { bg: '#ECFDF5', text: '#059669' },
+                { bg: '#FFF7ED', text: '#EA580C' },
+                { bg: '#FAF5FF', text: '#9333EA' }
+              ];
+              const colorIndex = (user.charCodeAt(0) + (user.charCodeAt(1) || 0)) % colors.length;
+              const colorPair = colors[colorIndex];
+
+              return (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '4px 0' }}>
+                  {/* 닉네임 아바타 원형 */}
+                  <div style={{
+                    width: '36px', height: '36px', borderRadius: '50%', background: colorPair.bg,
+                    display: 'flex', alignItems: 'center', color: colorPair.text,
+                    fontSize: '0.8rem', fontWeight: 700, flexShrink: 0, justifyContent: 'center',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.05)'
+                  }}>
+                    {user.slice(0, 2)}
+                  </div>
+                  {/* 정보 */}
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: '0.92rem', fontWeight: 700, color: '#1E293B' }}>{user}</span>
+                  </div>
+                  {/* 하트 표시 */}
+                  <Heart size={16} fill="#FF2F40" color="#FF2F40" style={{ marginRight: '8px' }} />
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: '8px' }}>
+              <Heart size={36} color="#CBD5E1" />
+              <span style={{ fontSize: '0.9rem' }}>아직 좋아요를 누른 사람이 없습니다.</span>
+            </div>
+          )}
+        </div>
+      </div>
     </>
   );
 };
